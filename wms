@@ -188,9 +188,11 @@ function cmd_search() {
     local count
     count=$(item_count)
 
+    local fzf_header
     if [[ $count -eq 0 ]]; then
-        print "${C_DIM}No items yet. Use 'wms add' to add items.${C_RESET}"
-        exit 0
+        fzf_header=$'No items yet. Press ctrl-a to add your first item.\n[ctrl-a] add  [esc] quit'
+    else
+        fzf_header=$'[enter] show location  [ctrl-e] edit  [ctrl-d] delete\n[ctrl-a] add  [ctrl-r] reload'
     fi
 
     # fzf key bindings use reload to refresh after edits/deletes
@@ -202,11 +204,13 @@ function cmd_search() {
             --with-nth='2,3,4,5' \
             --layout=reverse \
             --prompt='wms> ' \
-            --header=$'[enter] show location  [ctrl-e] edit  [ctrl-d] delete  [ctrl-r] reload' \
+            --ghost='type to search...' \
+            --header="$fzf_header" \
             --preview="$WMS_SCRIPT _preview {1}" \
-            --preview-window='right:45%:wrap' \
+            --preview-window='right:35%:wrap' \
             --bind="ctrl-e:execute($WMS_SCRIPT _edit_line {1})+reload(tail -n +2 '$WMS_FILE' | nl -ba -nrz -w6)" \
             --bind="ctrl-d:execute($WMS_SCRIPT _delete_line {1})+reload(tail -n +2 '$WMS_FILE' | nl -ba -nrz -w6)" \
+            --bind="ctrl-a:execute($WMS_SCRIPT add)+reload(tail -n +2 '$WMS_FILE' | nl -ba -nrz -w6)" \
             --bind="ctrl-r:reload(tail -n +2 '$WMS_FILE' | nl -ba -nrz -w6)"
     )
 
@@ -544,6 +548,7 @@ function cmd_help() {
     print ""
     print "${C_BOLD}FZF KEYS${C_RESET} (in interactive search)"
     print "  enter    Print the item's location"
+    print "  ctrl-a   Add a new item"
     print "  ctrl-e   Edit selected item"
     print "  ctrl-d   Delete selected item (with confirmation)"
     print "  ctrl-r   Reload list"
@@ -571,7 +576,7 @@ function cmd__preview() {
     print "${C_CYAN}Location:${C_RESET}  ${item_location:-${C_DIM}(not set)${C_RESET}}"
     print "${C_CYAN}Category:${C_RESET}  ${item_category:-${C_DIM}(not set)${C_RESET}}"
     print "${C_CYAN}Tags:${C_RESET}      ${item_tags:-${C_DIM}(none)${C_RESET}}"
-    [[ -n "$item_notes" ]] && print "${C_CYAN}Notes:${C_RESET}     $item_notes"
+    print "${C_CYAN}Notes:${C_RESET}     ${item_notes:-${C_DIM}(none)${C_RESET}}"
     return 0
 }
 
