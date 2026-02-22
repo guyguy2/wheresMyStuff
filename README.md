@@ -27,7 +27,7 @@ Works on macOS and Linux.
 
 ```sh
 # Clone the repo
-git clone https://github.com/YOUR_USERNAME/wheresMyStuff.git
+git clone https://github.com/guyguy2/wheresMyStuff.git
 cd wheresMyStuff
 
 # Symlink to your PATH
