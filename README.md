@@ -4,6 +4,8 @@ A fast terminal tool for tracking where physical items are stored. Type a few le
 
 ![wms screenshot](docs/screenshot.png)
 
+![wms demo](docs/demo.gif)
+
 ## Why
 
 You put your passport somewhere safe. Now you can't find it. `wms` solves this by giving you a searchable inventory from the terminal in seconds.
