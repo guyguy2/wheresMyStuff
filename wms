@@ -1,0 +1,642 @@
+#!/usr/bin/env zsh
+# wms - Where's My Stuff
+# Track where physical items are stored
+
+readonly WMS_SCRIPT="${0:A}"
+readonly WMS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/wms"
+readonly WMS_FILE="$WMS_DIR/items.tsv"
+readonly TSV_HEADER=$'name\tlocation\tcategory\ttags\tnotes'
+
+# ANSI colors
+readonly C_BOLD=$'\033[1m'
+readonly C_DIM=$'\033[2m'
+readonly C_RESET=$'\033[0m'
+readonly C_CYAN=$'\033[36m'
+readonly C_YELLOW=$'\033[33m'
+readonly C_GREEN=$'\033[32m'
+readonly C_RED=$'\033[31m'
+
+function init_data() {
+    mkdir -p "$WMS_DIR"
+    [[ -f "$WMS_FILE" ]] || printf "%s\n" "$TSV_HEADER" > "$WMS_FILE"
+}
+
+function check_fzf() {
+    command -v fzf >/dev/null && return 0
+    print -u2 ""
+    print -u2 "${C_BOLD}${C_RED}wms: fzf is required but not installed.${C_RESET}"
+    print -u2 ""
+    print -u2 "Install it with one of:"
+    print -u2 "  ${C_BOLD}brew install fzf${C_RESET}          (macOS / Homebrew)"
+    print -u2 "  ${C_BOLD}apt-get install fzf${C_RESET}       (Debian / Ubuntu)"
+    print -u2 "  ${C_BOLD}pacman -S fzf${C_RESET}             (Arch Linux)"
+    print -u2 "  ${C_BOLD}https://github.com/junegunn/fzf${C_RESET}  (manual install)"
+    print -u2 ""
+    return 1
+}
+
+function strip_tabs() {
+    printf '%s' "$1" | tr -d $'\t'
+}
+
+# Return number of data lines (excludes header)
+function item_count() {
+    local count
+    count=$(wc -l < "$WMS_FILE")
+    print $(( count - 1 ))
+}
+
+# Get a specific line from the file (1-based, counting from header)
+# Line 1 = first data item = file line 2
+function get_item_line() {
+    local item_num="$1"
+    local file_line=$(( item_num + 1 ))
+    sed -n "${file_line}p" "$WMS_FILE"
+}
+
+# Split a TSV line into named variables: item_name, item_location, item_category, item_tags, item_notes
+function parse_item() {
+    local line="$1"
+    item_name="${line%%$'\t'*}"
+    local rest="${line#*$'\t'}"
+    item_location="${rest%%$'\t'*}"
+    rest="${rest#*$'\t'}"
+    item_category="${rest%%$'\t'*}"
+    rest="${rest#*$'\t'}"
+    item_tags="${rest%%$'\t'*}"
+    item_notes="${rest#*$'\t'}"
+}
+
+function format_table() {
+    # Read stdin and format as aligned table with header
+    local -a lines
+    local line
+    while IFS= read -r line; do
+        lines+=("$line")
+    done
+
+    if [[ ${#lines[@]} -eq 0 ]]; then
+        print "${C_DIM}(no items)${C_RESET}"
+        return
+    fi
+
+    # Print with column alignment using column command
+    # Add a header row for display
+    local header="${C_BOLD}${C_CYAN}NAME\tLOCATION\tCATEGORY\tTAGS${C_RESET}"
+    {
+        printf "%s\n" "$header"
+        for line in "${lines[@]}"; do
+            # Extract first 4 fields for display
+            local name="${line%%$'\t'*}"
+            local rest="${line#*$'\t'}"
+            local location="${rest%%$'\t'*}"
+            rest="${rest#*$'\t'}"
+            local category="${rest%%$'\t'*}"
+            rest="${rest#*$'\t'}"
+            local tags="${rest%%$'\t'*}"
+            printf "%s\t%s\t%s\t%s\n" "$name" "$location" "$category" "$tags"
+        done
+    } | column -t -s $'\t'
+}
+
+function help_add() {
+    print "${C_BOLD}wms add${C_RESET} - Add an item to your inventory"
+    print ""
+    print "${C_BOLD}USAGE${C_RESET}"
+    print "  wms add [name] [flags]"
+    print ""
+    print "If name or any optional field is omitted, you will be prompted interactively."
+    print ""
+    print "${C_BOLD}FLAGS${C_RESET}"
+    print "  -l, --location <loc>   Where the item is stored"
+    print "  -c, --category <cat>   Grouping label (e.g. Documents, Tools)"
+    print "  -t, --tags <tags>      Space-separated keywords for extra searchability"
+    print "  -n, --notes <text>     Freeform notes"
+    print "  -h, --help             Show this help"
+    print ""
+    print "${C_BOLD}EXAMPLES${C_RESET}"
+    print "  wms add \"TV Remote\" -l \"Living room cabinet\" -t \"samsung\""
+    print "  wms add \"Passport\" -l \"Drawer 2\" -c \"Documents\" -t \"travel id\" -n \"exp 2030\""
+    print "  wms add                            # fully interactive prompts"
+}
+
+function cmd_add() {
+    local name="" location="" category="" tags="" notes=""
+
+    # Parse flags if provided
+    local args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)      help_add; return 0 ;;
+            -l|--location)  location=$(strip_tabs "$2"); shift 2 ;;
+            -c|--category)  category=$(strip_tabs "$2"); shift 2 ;;
+            -t|--tags)      tags=$(strip_tabs "$2"); shift 2 ;;
+            -n|--notes)     notes=$(strip_tabs "$2"); shift 2 ;;
+            -*)             print -u2 "wms add: unknown flag '$1'"; print -u2 "Run 'wms add --help' for usage."; exit 1 ;;
+            *)              args+=("$1"); shift ;;
+        esac
+    done
+
+    # First positional arg is name
+    if [[ ${#args[@]} -gt 0 ]]; then
+        name=$(strip_tabs "${args[1]}")
+    fi
+
+    # Prompt for required name if not given
+    if [[ -z "$name" ]]; then
+        printf "${C_BOLD}Name${C_RESET}: "
+        read -r name
+        name=$(strip_tabs "$name")
+    fi
+
+    if [[ -z "$name" ]]; then
+        print -u2 "wms: name is required"
+        exit 1
+    fi
+
+    # Prompt for optional fields if not given via flags
+    if [[ -z "$location" ]]; then
+        printf "${C_BOLD}Location${C_RESET} (optional): "
+        read -r location
+        location=$(strip_tabs "$location")
+    fi
+
+    if [[ -z "$category" ]]; then
+        printf "${C_BOLD}Category${C_RESET} (optional): "
+        read -r category
+        category=$(strip_tabs "$category")
+    fi
+
+    if [[ -z "$tags" ]]; then
+        printf "${C_BOLD}Tags${C_RESET} (optional, space-separated): "
+        read -r tags
+        tags=$(strip_tabs "$tags")
+    fi
+
+    if [[ -z "$notes" ]]; then
+        printf "${C_BOLD}Notes${C_RESET} (optional): "
+        read -r notes
+        notes=$(strip_tabs "$notes")
+    fi
+
+    # Append to file
+    printf "%s\t%s\t%s\t%s\t%s\n" "$name" "$location" "$category" "$tags" "$notes" >> "$WMS_FILE"
+    print "${C_GREEN}Added:${C_RESET} $name${location:+ -> $location}"
+}
+
+function cmd_search() {
+    local count
+    count=$(item_count)
+
+    if [[ $count -eq 0 ]]; then
+        print "${C_DIM}No items yet. Use 'wms add' to add items.${C_RESET}"
+        exit 0
+    fi
+
+    # fzf key bindings use reload to refresh after edits/deletes
+    local selected
+    selected=$(
+        tail -n +2 "$WMS_FILE" | nl -ba -nrz -w6 | \
+        fzf \
+            --delimiter=$'\t' \
+            --with-nth='2,3,4,5' \
+            --layout=reverse \
+            --prompt='wms> ' \
+            --header=$'[enter] show location  [ctrl-e] edit  [ctrl-d] delete  [ctrl-r] reload' \
+            --preview="$WMS_SCRIPT _preview {1}" \
+            --preview-window='right:45%:wrap' \
+            --bind="ctrl-e:execute($WMS_SCRIPT _edit_line {1})+reload(tail -n +2 '$WMS_FILE' | nl -ba -nrz -w6)" \
+            --bind="ctrl-d:execute($WMS_SCRIPT _delete_line {1})+reload(tail -n +2 '$WMS_FILE' | nl -ba -nrz -w6)" \
+            --bind="ctrl-r:reload(tail -n +2 '$WMS_FILE' | nl -ba -nrz -w6)"
+    )
+
+    if [[ -n "$selected" ]]; then
+        # Extract location field (field 3 after nl prepends line number as field 1)
+        local line_num="${selected%%$'\t'*}"
+        local rest="${selected#*$'\t'}"
+        local item_name="${rest%%$'\t'*}"
+        rest="${rest#*$'\t'}"
+        local item_location="${rest%%$'\t'*}"
+        print "${C_BOLD}${item_name}${C_RESET}: ${item_location:-${C_DIM}(no location set)${C_RESET}}"
+    fi
+}
+
+function help_find() {
+    print "${C_BOLD}wms find${C_RESET} - Search items without launching fzf"
+    print ""
+    print "${C_BOLD}USAGE${C_RESET}"
+    print "  wms find <keyword> [keyword...]"
+    print ""
+    print "Multiple keywords are ANDed: every term must appear somewhere in the item."
+    print "Search is case-insensitive and spans all fields: name, location, category, tags, notes."
+    print ""
+    print "${C_BOLD}EXAMPLES${C_RESET}"
+    print "  wms find passport                  # items containing \"passport\""
+    print "  wms find filing cabinet            # items containing both \"filing\" AND \"cabinet\""
+    print "  wms find tv remote                 # both \"tv\" AND \"remote\" must match"
+    print ""
+    print "Alias: wms f"
+}
+
+function cmd_find() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        help_find; return 0
+    fi
+
+    if [[ $# -eq 0 ]]; then
+        print -u2 "wms find: at least one keyword required"
+        print -u2 "Run 'wms find --help' for usage."
+        exit 1
+    fi
+
+    local result
+    result=$(tail -n +2 "$WMS_FILE")
+
+    for term in "$@"; do
+        result=$(printf '%s\n' "$result" | grep -i "$term")
+    done
+
+    if [[ -z "$result" ]]; then
+        print "${C_DIM}No items found matching: $*${C_RESET}"
+        exit 0
+    fi
+
+    printf '%s\n' "$result" | format_table
+}
+
+function help_ls() {
+    print "${C_BOLD}wms ls${C_RESET} - List all items"
+    print ""
+    print "${C_BOLD}USAGE${C_RESET}"
+    print "  wms ls"
+    print ""
+    print "Prints all items as an aligned table showing name, location, category, and tags."
+    print "Notes are not shown in the table; use 'wms' (interactive) to see full details."
+    print ""
+    print "Alias: wms list"
+}
+
+function cmd_ls() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        help_ls; return 0
+    fi
+
+    local count
+    count=$(item_count)
+
+    if [[ $count -eq 0 ]]; then
+        print "${C_DIM}No items yet. Use 'wms add' to add items.${C_RESET}"
+        exit 0
+    fi
+
+    print "${C_BOLD}${C_CYAN}$count item(s):${C_RESET}"
+    tail -n +2 "$WMS_FILE" | format_table
+}
+
+function help_rm() {
+    print "${C_BOLD}wms rm${C_RESET} - Delete an item"
+    print ""
+    print "${C_BOLD}USAGE${C_RESET}"
+    print "  wms rm"
+    print ""
+    print "Opens an fzf picker to select an item. You will be asked to confirm before deletion."
+    print ""
+    print "${C_BOLD}KEYS${C_RESET}"
+    print "  enter   Confirm selection and prompt for deletion"
+    print "  esc     Cancel without deleting"
+    print ""
+    print "Alias: wms remove"
+}
+
+function cmd_rm() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        help_rm; return 0
+    fi
+
+    local count
+    count=$(item_count)
+
+    if [[ $count -eq 0 ]]; then
+        print "${C_DIM}No items to remove.${C_RESET}"
+        exit 0
+    fi
+
+    local selected
+    selected=$(
+        tail -n +2 "$WMS_FILE" | nl -ba -nrz -w6 | \
+        fzf \
+            --delimiter=$'\t' \
+            --with-nth='2,3,4,5' \
+            --layout=reverse \
+            --prompt='remove> ' \
+            --header='[enter] delete selected item  [esc] cancel' \
+            --preview="$WMS_SCRIPT _preview {1}" \
+            --preview-window='right:45%:wrap'
+    )
+
+    if [[ -z "$selected" ]]; then
+        print "${C_DIM}Cancelled.${C_RESET}"
+        exit 0
+    fi
+
+    local line_num="${selected%%$'\t'*}"
+    # Remove leading zeros from nl output
+    line_num="${line_num##0}"
+    line_num="${line_num:-0}"
+    # Convert to integer
+    line_num=$((10#$line_num))
+
+    local rest="${selected#*$'\t'}"
+    local item_name="${rest%%$'\t'*}"
+
+    printf "Delete ${C_BOLD}${item_name}${C_RESET}? [y/N] "
+    read -r confirm
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        local file_line=$(( line_num + 1 ))
+        local tmpfile
+        tmpfile=$(mktemp)
+        sed "${file_line}d" "$WMS_FILE" > "$tmpfile" && mv "$tmpfile" "$WMS_FILE"
+        print "${C_RED}Deleted:${C_RESET} $item_name"
+    else
+        print "${C_DIM}Cancelled.${C_RESET}"
+    fi
+}
+
+function help_edit() {
+    print "${C_BOLD}wms edit${C_RESET} - Edit an item"
+    print ""
+    print "${C_BOLD}USAGE${C_RESET}"
+    print "  wms edit"
+    print ""
+    print "Opens an fzf picker to select an item, then prompts to edit each field."
+    print "Each field is pre-populated with its current value - use standard line-editing"
+    print "to modify. Press enter with an empty name to keep the existing name."
+    print ""
+    print "${C_BOLD}KEYS${C_RESET}"
+    print "  enter   Confirm selection and start editing"
+    print "  esc     Cancel"
+    print ""
+    print "Alias: wms e"
+}
+
+function cmd_edit() {
+    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+        help_edit; return 0
+    fi
+
+    local count
+    count=$(item_count)
+
+    if [[ $count -eq 0 ]]; then
+        print "${C_DIM}No items to edit.${C_RESET}"
+        exit 0
+    fi
+
+    local selected
+    selected=$(
+        tail -n +2 "$WMS_FILE" | nl -ba -nrz -w6 | \
+        fzf \
+            --delimiter=$'\t' \
+            --with-nth='2,3,4,5' \
+            --layout=reverse \
+            --prompt='edit> ' \
+            --header='[enter] edit selected item  [esc] cancel' \
+            --preview="$WMS_SCRIPT _preview {1}" \
+            --preview-window='right:45%:wrap'
+    )
+
+    if [[ -z "$selected" ]]; then
+        print "${C_DIM}Cancelled.${C_RESET}"
+        exit 0
+    fi
+
+    local line_num="${selected%%$'\t'*}"
+    line_num=$((10#$line_num))
+    _do_edit "$line_num"
+}
+
+# Internal: edit item at given data line number (1-based)
+function _do_edit() {
+    local item_num="$1"
+    local file_line=$(( item_num + 1 ))
+    local raw_line
+    raw_line=$(sed -n "${file_line}p" "$WMS_FILE")
+
+    if [[ -z "$raw_line" ]]; then
+        print -u2 "wms: item not found"
+        exit 1
+    fi
+
+    local item_name item_location item_category item_tags item_notes
+    parse_item "$raw_line"
+
+    print "${C_BOLD}Editing item (press enter to keep current value):${C_RESET}"
+
+    # Use vared for pre-populated line editing
+    printf "${C_BOLD}Name${C_RESET} [%s]: " "$item_name"
+    local new_name="$item_name"
+    vared new_name
+    new_name=$(strip_tabs "$new_name")
+    [[ -z "$new_name" ]] && new_name="$item_name"
+
+    printf "${C_BOLD}Location${C_RESET} [%s]: " "$item_location"
+    local new_location="$item_location"
+    vared new_location
+    new_location=$(strip_tabs "$new_location")
+
+    printf "${C_BOLD}Category${C_RESET} [%s]: " "$item_category"
+    local new_category="$item_category"
+    vared new_category
+    new_category=$(strip_tabs "$new_category")
+
+    printf "${C_BOLD}Tags${C_RESET} [%s]: " "$item_tags"
+    local new_tags="$item_tags"
+    vared new_tags
+    new_tags=$(strip_tabs "$new_tags")
+
+    printf "${C_BOLD}Notes${C_RESET} [%s]: " "$item_notes"
+    local new_notes="$item_notes"
+    vared new_notes
+    new_notes=$(strip_tabs "$new_notes")
+
+    # Build new TSV line - escape any / or & for sed replacement
+    local new_line
+    new_line=$(printf "%s\t%s\t%s\t%s\t%s" "$new_name" "$new_location" "$new_category" "$new_tags" "$new_notes")
+
+    # Use a python-free approach: write temp file and reconstruct
+    local tmp_file
+    tmp_file=$(mktemp)
+    awk -v line="$file_line" -v new="$new_line" 'NR == line { print new; next } { print }' "$WMS_FILE" > "$tmp_file"
+    mv "$tmp_file" "$WMS_FILE"
+
+    print "${C_GREEN}Updated:${C_RESET} $new_name"
+}
+
+function cmd_install() {
+    local bin_dir="$HOME/.local/bin"
+    local link="$bin_dir/wms"
+
+    mkdir -p "$bin_dir"
+
+    if [[ -L "$link" ]]; then
+        print "Removing existing symlink: $link"
+        rm "$link"
+    elif [[ -e "$link" ]]; then
+        print -u2 "wms install: '$link' exists and is not a symlink. Remove it manually."
+        exit 1
+    fi
+
+    ln -s "$WMS_SCRIPT" "$link"
+    print "${C_GREEN}Installed:${C_RESET} $link -> $WMS_SCRIPT"
+
+    # Check if ~/.local/bin is in PATH
+    if ! print "$PATH" | grep -q "$bin_dir"; then
+        print "${C_YELLOW}Note:${C_RESET} '$bin_dir' is not in your PATH."
+        print "Add this to your ~/.zshrc or ~/.zshenv:"
+        print "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    fi
+}
+
+function cmd_help() {
+    print "${C_BOLD}wms${C_RESET} - Where's My Stuff"
+    print "Track where physical items are stored. Type keywords, find locations fast."
+    print ""
+    print "${C_BOLD}USAGE${C_RESET}"
+    print "  wms                        Interactive fzf search (default)"
+    print "  wms add [name] [flags]     Add an item"
+    print "  wms find <kw> [kw...]      Non-interactive search (keywords ANDed)"
+    print "  wms ls                     List all items as a table"
+    print "  wms edit                   Pick and edit an item"
+    print "  wms rm                     Pick and delete an item"
+    print "  wms install                Symlink to ~/.local/bin/wms"
+    print "  wms help                   Show this help"
+    print ""
+    print "Run ${C_BOLD}wms <command> --help${C_RESET} for detailed help on any command."
+    print ""
+    print "${C_BOLD}HOW IT WORKS${C_RESET}"
+    print "  Running 'wms' opens an fzf fuzzy-finder over all your items. Type any"
+    print "  words to filter across all fields at once - name, location, category,"
+    print "  tags, and notes. Selecting an item prints its location."
+    print ""
+    print "  Items have 5 fields:"
+    print "    name       What the item is (required)"
+    print "    location   Where it is stored"
+    print "    category   A grouping label (e.g. Documents, Tools, Electronics)"
+    print "    tags       Extra space-separated keywords to aid searching"
+    print "    notes      Freeform text (shown in preview panel only)"
+    print ""
+    print "  Data is stored as plain tab-separated text at:"
+    print "    ${C_DIM}$WMS_FILE${C_RESET}"
+    print "  This file can be opened and edited directly in any text editor or"
+    print "  spreadsheet app. One line per item."
+    print ""
+    print "${C_BOLD}ADD FLAGS${C_RESET}"
+    print "  -l, --location <loc>       Where it's stored"
+    print "  -c, --category <cat>       Grouping label"
+    print "  -t, --tags <tags>          Space-separated keywords"
+    print "  -n, --notes <text>         Freeform notes"
+    print ""
+    print "${C_BOLD}EXAMPLES${C_RESET}"
+    print "  wms add \"TV Remote\" -l \"Living room cabinet\" -t \"samsung\""
+    print "  wms add \"Passport\"                   # prompts for each field"
+    print "  wms find passport                    # non-interactive search"
+    print "  wms find filing cabinet              # both words must match (AND)"
+    print ""
+    print "${C_BOLD}FZF KEYS${C_RESET} (in interactive search)"
+    print "  enter    Print the item's location"
+    print "  ctrl-e   Edit selected item"
+    print "  ctrl-d   Delete selected item (with confirmation)"
+    print "  ctrl-r   Reload list"
+}
+
+# Private subcommand: called by fzf --preview
+# Argument is the line number from nl output (1-based data line)
+function cmd__preview() {
+    local item_num="$1"
+    item_num=$((10#$item_num))
+    local file_line=$(( item_num + 1 ))
+    local raw_line
+    raw_line=$(sed -n "${file_line}p" "$WMS_FILE")
+
+    if [[ -z "$raw_line" ]]; then
+        print "(item not found)"
+        return
+    fi
+
+    local item_name item_location item_category item_tags item_notes
+    parse_item "$raw_line"
+
+    print "${C_BOLD}${item_name}${C_RESET}"
+    print ""
+    print "${C_CYAN}Location:${C_RESET}  ${item_location:-${C_DIM}(not set)${C_RESET}}"
+    print "${C_CYAN}Category:${C_RESET}  ${item_category:-${C_DIM}(not set)${C_RESET}}"
+    print "${C_CYAN}Tags:${C_RESET}      ${item_tags:-${C_DIM}(none)${C_RESET}}"
+    [[ -n "$item_notes" ]] && print "${C_CYAN}Notes:${C_RESET}     $item_notes"
+    return 0
+}
+
+# Private subcommand: edit a specific line (called from fzf ctrl-e binding)
+function cmd__edit_line() {
+    local item_num="$1"
+    item_num=$((10#$item_num))
+    _do_edit "$item_num"
+}
+
+# Private subcommand: delete a specific line (called from fzf ctrl-d binding)
+function cmd__delete_line() {
+    local item_num="$1"
+    item_num=$((10#$item_num))
+    local file_line=$(( item_num + 1 ))
+    local raw_line
+    raw_line=$(sed -n "${file_line}p" "$WMS_FILE")
+
+    if [[ -z "$raw_line" ]]; then
+        print -u2 "wms: item not found"
+        return 1
+    fi
+
+    local item_name item_location item_category item_tags item_notes
+    parse_item "$raw_line"
+
+    printf "Delete '${item_name}'? [y/N] " >&2
+    read -r confirm < /dev/tty
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        local tmpfile
+        tmpfile=$(mktemp)
+        sed "${file_line}d" "$WMS_FILE" > "$tmpfile" && mv "$tmpfile" "$WMS_FILE"
+        print "Deleted: $item_name" >&2
+    else
+        print "Cancelled." >&2
+    fi
+}
+
+function main() {
+    init_data
+
+    local cmd="${1:-search}"
+    shift 2>/dev/null || true
+
+    # Commands that require fzf
+    case "$cmd" in
+        search|s|rm|remove|edit|e|_preview|_edit_line|_delete_line)
+            check_fzf || exit 1
+            ;;
+    esac
+
+    case "$cmd" in
+        add)            cmd_add "$@" ;;
+        search|s)       cmd_search "$@" ;;
+        find|f)         cmd_find "$@" ;;
+        ls|list)        cmd_ls "$@" ;;
+        rm|remove)      cmd_rm "$@" ;;
+        edit|e)         cmd_edit "$@" ;;
+        install)        cmd_install ;;
+        help|-h|--help) cmd_help ;;
+        _preview)       cmd__preview "$@" ;;
+        _edit_line)     cmd__edit_line "$@" ;;
+        _delete_line)   cmd__delete_line "$@" ;;
+        *)              print -u2 "wms: unknown command '$cmd'"; cmd_help; exit 1 ;;
+    esac
+}
+
+main "$@"
