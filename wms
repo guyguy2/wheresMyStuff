@@ -36,7 +36,7 @@ function check_fzf() {
 }
 
 function strip_tabs() {
-    printf '%s' "$1" | tr -d $'\t'
+    printf '%s' "$1" | tr -d $'\t\r'
 }
 
 # Return number of data lines (excludes header)
@@ -121,6 +121,9 @@ function help_add() {
 }
 
 function cmd_add() {
+    # When called from fzf execute binding, terminal is in raw mode - reset it
+    stty sane 2>/dev/null || true
+
     local name="" location="" category="" tags="" notes=""
 
     # Parse flags if provided
@@ -198,29 +201,29 @@ function cmd_search() {
     # fzf key bindings use reload to refresh after edits/deletes
     local selected
     selected=$(
-        tail -n +2 "$WMS_FILE" | nl -ba -nrz -w6 | \
+        $WMS_SCRIPT _list_items | \
         fzf \
             --delimiter=$'\t' \
-            --with-nth='2,3,4,5' \
+            --with-nth='2' \
+            --ansi \
             --layout=reverse \
+            --header-border=bottom \
             --prompt='wms> ' \
             --ghost='type to search...' \
             --header="$fzf_header" \
             --preview="$WMS_SCRIPT _preview {1}" \
             --preview-window='right:35%:wrap' \
-            --bind="ctrl-e:execute($WMS_SCRIPT _edit_line {1})+reload(tail -n +2 '$WMS_FILE' | nl -ba -nrz -w6)" \
-            --bind="ctrl-d:execute($WMS_SCRIPT _delete_line {1})+reload(tail -n +2 '$WMS_FILE' | nl -ba -nrz -w6)" \
-            --bind="ctrl-a:execute($WMS_SCRIPT add)+reload(tail -n +2 '$WMS_FILE' | nl -ba -nrz -w6)" \
-            --bind="ctrl-r:reload(tail -n +2 '$WMS_FILE' | nl -ba -nrz -w6)"
+            --bind="ctrl-e:execute($WMS_SCRIPT _edit_line {1})+reload($WMS_SCRIPT _list_items)" \
+            --bind="ctrl-d:execute($WMS_SCRIPT _delete_line {1})+reload($WMS_SCRIPT _list_items)" \
+            --bind="ctrl-a:execute($WMS_SCRIPT add)+reload($WMS_SCRIPT _list_items)" \
+            --bind="ctrl-r:reload($WMS_SCRIPT _list_items)"
     )
 
     if [[ -n "$selected" ]]; then
-        # Extract location field (field 3 after nl prepends line number as field 1)
         local line_num="${selected%%$'\t'*}"
-        local rest="${selected#*$'\t'}"
-        local item_name="${rest%%$'\t'*}"
-        rest="${rest#*$'\t'}"
-        local item_location="${rest%%$'\t'*}"
+        line_num=$((10#$line_num))
+        local item_name item_location item_category item_tags item_notes
+        parse_item "$(get_item_line "$line_num")"
         print "${C_BOLD}${item_name}${C_RESET}: ${item_location:-${C_DIM}(no location set)${C_RESET}}"
     fi
 }
@@ -327,11 +330,13 @@ function cmd_rm() {
 
     local selected
     selected=$(
-        tail -n +2 "$WMS_FILE" | nl -ba -nrz -w6 | \
+        $WMS_SCRIPT _list_items | \
         fzf \
             --delimiter=$'\t' \
-            --with-nth='2,3,4,5' \
+            --with-nth='2' \
+            --ansi \
             --layout=reverse \
+            --header-border=bottom \
             --prompt='remove> ' \
             --header='[enter] delete selected item  [esc] cancel' \
             --preview="$WMS_SCRIPT _preview {1}" \
@@ -344,14 +349,10 @@ function cmd_rm() {
     fi
 
     local line_num="${selected%%$'\t'*}"
-    # Remove leading zeros from nl output
-    line_num="${line_num##0}"
-    line_num="${line_num:-0}"
-    # Convert to integer
     line_num=$((10#$line_num))
 
-    local rest="${selected#*$'\t'}"
-    local item_name="${rest%%$'\t'*}"
+    local item_name item_location item_category item_tags item_notes
+    parse_item "$(get_item_line "$line_num")"
 
     printf "Delete ${C_BOLD}${item_name}${C_RESET}? [y/N] "
     read -r confirm
@@ -398,11 +399,13 @@ function cmd_edit() {
 
     local selected
     selected=$(
-        tail -n +2 "$WMS_FILE" | nl -ba -nrz -w6 | \
+        $WMS_SCRIPT _list_items | \
         fzf \
             --delimiter=$'\t' \
-            --with-nth='2,3,4,5' \
+            --with-nth='2' \
+            --ansi \
             --layout=reverse \
+            --header-border=bottom \
             --prompt='edit> ' \
             --header='[enter] edit selected item  [esc] cancel' \
             --preview="$WMS_SCRIPT _preview {1}" \
@@ -421,6 +424,8 @@ function cmd_edit() {
 
 # Internal: edit item at given data line number (1-based)
 function _do_edit() {
+    stty sane 2>/dev/null || true
+
     local item_num="$1"
     local file_line=$(( item_num + 1 ))
     local raw_line
@@ -554,6 +559,18 @@ function cmd_help() {
     print "  ctrl-r   Reload list"
 }
 
+# Private subcommand: output numbered+formatted item list for fzf
+# Each line: <linenum>\t<name> [│ <field>...]  (only non-empty fields included)
+function cmd__list_items() {
+    tail -n +2 "$WMS_FILE" | nl -ba -nrz -w6 | awk -F'\t' -v sep=" \033[2m│\033[0m " '{
+        display = $2
+        if ($3 != "") display = display sep $3
+        if ($4 != "") display = display sep $4
+        if ($5 != "") display = display sep $5
+        print $1 "\t" display
+    }'
+}
+
 # Private subcommand: called by fzf --preview
 # Argument is the line number from nl output (1-based data line)
 function cmd__preview() {
@@ -640,6 +657,7 @@ function main() {
         _preview)       cmd__preview "$@" ;;
         _edit_line)     cmd__edit_line "$@" ;;
         _delete_line)   cmd__delete_line "$@" ;;
+        _list_items)    cmd__list_items "$@" ;;
         *)              print -u2 "wms: unknown command '$cmd'"; cmd_help; exit 1 ;;
     esac
 }
