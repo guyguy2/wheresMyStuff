@@ -2,11 +2,7 @@
 
 A fast terminal tool for tracking where physical items are stored. Type a few letters, find your stuff.
 
-```
-$ wms
-> passport
-  Passport    Drawer 2    Documents    travel id
-```
+![wms screenshot](docs/screenshot.png)
 
 ## Why
 
