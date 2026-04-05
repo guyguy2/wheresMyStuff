@@ -162,11 +162,30 @@ assert_contains "find no match message" "$find_none" "No items found"
 print "\n[find - exit code]"
 assert_exit "find returns non-zero on no match" 1 $WMS find "zzzznotfound"
 
+# --- version ---
+print "\n[version]"
+local ver_out=$($WMS version 2>&1)
+assert_contains "version prints wms" "$ver_out" "wms"
+assert_contains "version prints number" "$ver_out" "1."
+
+local ver_v=$($WMS -v 2>&1)
+assert_eq "-v matches version" "$ver_out" "$ver_v"
+
 # --- help ---
 print "\n[help]"
 local help_out=$($WMS help 2>&1)
 assert_contains "help mentions add" "$help_out" "add"
 assert_contains "help mentions find" "$help_out" "find"
+assert_contains "help mentions version" "$help_out" "version"
+
+# --- backslash display ---
+print "\n[backslash display]"
+local add_out=$($WMS add 'Backslash Test' -l 'C:\Users\docs' -c 'Files' </dev/null 2>&1)
+assert_contains "add output preserves backslashes" "$add_out" 'C:\Users\docs'
+
+# --- add extra args ---
+print "\n[add - extra args]"
+assert_exit "add rejects unquoted multi-word name" 1 $WMS add TV Remote -l "shelf"
 
 # --- TSV integrity after all operations ---
 print "\n[integrity]"

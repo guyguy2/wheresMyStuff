@@ -49,5 +49,6 @@ All logic lives in a single file: `wms` (zsh script, ~676 lines).
 - `cmd_add` and `_do_edit` call `stty sane` at entry to reset terminal state. fzf's `execute()` binding runs subcommands while the terminal is in raw mode; without this reset, `read` and `vared` prompts behave incorrectly.
 - Interactive field editing uses zsh's `vared` builtin, which pre-populates the input buffer with the current value. This is zsh-specific and has no portable shell equivalent.
 - Color constants (`C_BOLD`, `C_RED`, etc.) are defined at the top and used throughout for consistent terminal output.
-- Error output goes to stderr via `print -u2`. Normal output uses `print`.
+- Error output goes to stderr via `print -u2`. Normal output uses `print -r --` when the line contains user data (prevents zsh from interpreting backslash escapes), plain `print` for static text.
+- `cmd_add` rejects multiple positional arguments to catch unquoted multi-word names (e.g. `wms add TV Remote` errors instead of silently dropping "Remote").
 - `readonly` globals are set at the top of the script for paths and the TSV header string.

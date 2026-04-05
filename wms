@@ -2,7 +2,7 @@
 # wms - Where's My Stuff
 # Track where physical items are stored
 
-readonly WMS_VERSION="1.1.0"
+readonly WMS_VERSION="1.1.1"
 readonly WMS_SCRIPT="${0:A}"
 readonly WMS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/wms"
 readonly WMS_FILE="$WMS_DIR/items.tsv"
@@ -146,8 +146,12 @@ function cmd_add() {
         esac
     done
 
-    # First positional arg is name
-    if [[ ${#args[@]} -gt 0 ]]; then
+    # First positional arg is name; error if multiple were given
+    if [[ ${#args[@]} -gt 1 ]]; then
+        print -u2 "wms add: too many arguments (did you forget to quote the name?)"
+        print -u2 "Run 'wms add --help' for usage."
+        return 1
+    elif [[ ${#args[@]} -eq 1 ]]; then
         name=$(strip_tabs "${args[1]}")
     fi
 
@@ -192,7 +196,7 @@ function cmd_add() {
 
     # Append to file
     printf "%s\t%s\t%s\t%s\t%s\n" "$name" "$location" "$category" "$tags" "$notes" >> "$WMS_FILE"
-    print "${C_GREEN}Added:${C_RESET} $name${location:+ -> $location}"
+    print -r -- "${C_GREEN}Added:${C_RESET} $name${location:+ -> $location}"
 }
 
 function cmd_search() {
@@ -232,7 +236,7 @@ function cmd_search() {
         line_num=$((10#$line_num))
         local item_name item_location item_category item_tags item_notes
         parse_item "$(get_item_line "$line_num")"
-        print "${C_BOLD}${item_name}${C_RESET}: ${item_location:-${C_DIM}(no location set)${C_RESET}}"
+        print -r -- "${C_BOLD}${item_name}${C_RESET}: ${item_location:-${C_DIM}(no location set)${C_RESET}}"
     fi
 }
 
@@ -348,7 +352,7 @@ function cmd_rm() {
             --prompt='remove> ' \
             --header='[enter] delete selected item  [esc] cancel' \
             --preview="$WMS_SCRIPT _preview {1}" \
-            --preview-window='right:45%:wrap'
+            --preview-window='right:35%:wrap'
     )
 
     if [[ -z "$selected" ]]; then
@@ -370,7 +374,7 @@ function cmd_rm() {
         local tmpfile
         tmpfile=$(mktemp)
         sed "${file_line}d" "$WMS_FILE" > "$tmpfile" && mv "$tmpfile" "$WMS_FILE"
-        print "${C_RED}Deleted:${C_RESET} $item_name"
+        print -r -- "${C_RED}Deleted:${C_RESET} $item_name"
     else
         print "${C_DIM}Cancelled.${C_RESET}"
     fi
@@ -418,7 +422,7 @@ function cmd_edit() {
             --prompt='edit> ' \
             --header='[enter] edit selected item  [esc] cancel' \
             --preview="$WMS_SCRIPT _preview {1}" \
-            --preview-window='right:45%:wrap'
+            --preview-window='right:35%:wrap'
     )
 
     if [[ -z "$selected" ]]; then
@@ -486,7 +490,7 @@ function _do_edit() {
     tail -n +$(( file_line + 1 )) "$WMS_FILE" >> "$tmp_file"
     mv "$tmp_file" "$WMS_FILE"
 
-    print "${C_GREEN}Updated:${C_RESET} $new_name"
+    print -r -- "${C_GREEN}Updated:${C_RESET} $new_name"
 }
 
 function cmd_install() {
@@ -526,6 +530,7 @@ function cmd_help() {
     print "  wms edit                   Pick and edit an item"
     print "  wms rm                     Pick and delete an item"
     print "  wms install                Symlink to ~/.local/bin/wms"
+    print "  wms version                Print version number"
     print "  wms help                   Show this help"
     print ""
     print "Run ${C_BOLD}wms <command> --help${C_RESET} for detailed help on any command."
@@ -597,12 +602,12 @@ function cmd__preview() {
     local item_name item_location item_category item_tags item_notes
     parse_item "$raw_line"
 
-    print "${C_BOLD}${item_name}${C_RESET}"
+    print -r -- "${C_BOLD}${item_name}${C_RESET}"
     print ""
-    print "${C_CYAN}Location:${C_RESET}  ${item_location:-${C_DIM}(not set)${C_RESET}}"
-    print "${C_CYAN}Category:${C_RESET}  ${item_category:-${C_DIM}(not set)${C_RESET}}"
-    print "${C_CYAN}Tags:${C_RESET}      ${item_tags:-${C_DIM}(none)${C_RESET}}"
-    print "${C_CYAN}Notes:${C_RESET}     ${item_notes:-${C_DIM}(none)${C_RESET}}"
+    print -r -- "${C_CYAN}Location:${C_RESET}  ${item_location:-${C_DIM}(not set)${C_RESET}}"
+    print -r -- "${C_CYAN}Category:${C_RESET}  ${item_category:-${C_DIM}(not set)${C_RESET}}"
+    print -r -- "${C_CYAN}Tags:${C_RESET}      ${item_tags:-${C_DIM}(none)${C_RESET}}"
+    print -r -- "${C_CYAN}Notes:${C_RESET}     ${item_notes:-${C_DIM}(none)${C_RESET}}"
     return 0
 }
 
@@ -636,7 +641,7 @@ function cmd__delete_line() {
         local tmpfile
         tmpfile=$(mktemp)
         sed "${file_line}d" "$WMS_FILE" > "$tmpfile" && mv "$tmpfile" "$WMS_FILE"
-        print "Deleted: $item_name" >&2
+        print -r -- "Deleted: $item_name" >&2
     else
         print "Cancelled." >&2
     fi
@@ -650,7 +655,7 @@ function main() {
 
     # Commands that require fzf
     case "$cmd" in
-        search|s|rm|remove|edit|e|_preview|_edit_line|_delete_line)
+        search|s|rm|remove|edit|e)
             check_fzf || exit 1
             ;;
     esac
