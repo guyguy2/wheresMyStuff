@@ -58,6 +58,7 @@ Opens fzf with all your items. Type to filter across name, location, category, t
 |---|---|
 | `enter` | Print item location |
 | `ctrl-e` | Edit selected item |
+| `ctrl-a` | Add a new item |
 | `ctrl-d` | Delete selected item |
 | `ctrl-r` | Reload list |
 
@@ -117,6 +118,8 @@ Items are stored as tab-separated values at:
 
 Each item has five fields: `name`, `location`, `category`, `tags`, `notes`. The file is human-readable and can be edited directly with any text editor or imported into a spreadsheet.
 
+Before any edit or delete, `wms` saves a backup to `items.tsv.bak` in the same directory.
+
 ## Command reference
 
 | Command | Alias | Description |
@@ -128,6 +131,7 @@ Each item has five fields: `name`, `location`, `category`, `tags`, `notes`. The 
 | `wms edit` | `wms e` | Pick and edit an item |
 | `wms rm` | `wms remove` | Pick and delete an item |
 | `wms install` | | Symlink to ~/.local/bin/wms |
+| `wms version` | `wms -v`, `wms --version` | Print version |
 | `wms help` | | Show help |
 
 ## License

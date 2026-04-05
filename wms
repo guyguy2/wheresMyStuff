@@ -2,6 +2,7 @@
 # wms - Where's My Stuff
 # Track where physical items are stored
 
+readonly WMS_VERSION="1.1.0"
 readonly WMS_SCRIPT="${0:A}"
 readonly WMS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/wms"
 readonly WMS_FILE="$WMS_DIR/items.tsv"
@@ -21,6 +22,11 @@ function init_data() {
     [[ -f "$WMS_FILE" ]] || printf "%s\n" "$TSV_HEADER" > "$WMS_FILE"
 }
 
+# Create a backup of the data file before destructive operations
+function backup_data() {
+    cp "$WMS_FILE" "$WMS_FILE.bak"
+}
+
 function check_fzf() {
     command -v fzf >/dev/null && return 0
     print -u2 ""
@@ -36,7 +42,7 @@ function check_fzf() {
 }
 
 function strip_tabs() {
-    printf '%s' "$1" | tr -d $'\t\r'
+    printf '%s' "$1" | tr -d $'\t\r\n'
 }
 
 # Return number of data lines (excludes header)
@@ -135,7 +141,7 @@ function cmd_add() {
             -c|--category)  category=$(strip_tabs "$2"); shift 2 ;;
             -t|--tags)      tags=$(strip_tabs "$2"); shift 2 ;;
             -n|--notes)     notes=$(strip_tabs "$2"); shift 2 ;;
-            -*)             print -u2 "wms add: unknown flag '$1'"; print -u2 "Run 'wms add --help' for usage."; exit 1 ;;
+            -*)             print -u2 "wms add: unknown flag '$1'"; print -u2 "Run 'wms add --help' for usage."; return 1 ;;
             *)              args+=("$1"); shift ;;
         esac
     done
@@ -154,32 +160,34 @@ function cmd_add() {
 
     if [[ -z "$name" ]]; then
         print -u2 "wms: name is required"
-        exit 1
+        return 1
     fi
 
-    # Prompt for optional fields if not given via flags
-    if [[ -z "$location" ]]; then
-        printf "${C_BOLD}Location${C_RESET} (optional): "
-        read -r location
-        location=$(strip_tabs "$location")
-    fi
+    # Prompt for optional fields if not given via flags (skip when non-interactive)
+    if [[ -t 0 ]]; then
+        if [[ -z "$location" ]]; then
+            printf "${C_BOLD}Location${C_RESET} (optional): "
+            read -r location
+            location=$(strip_tabs "$location")
+        fi
 
-    if [[ -z "$category" ]]; then
-        printf "${C_BOLD}Category${C_RESET} (optional): "
-        read -r category
-        category=$(strip_tabs "$category")
-    fi
+        if [[ -z "$category" ]]; then
+            printf "${C_BOLD}Category${C_RESET} (optional): "
+            read -r category
+            category=$(strip_tabs "$category")
+        fi
 
-    if [[ -z "$tags" ]]; then
-        printf "${C_BOLD}Tags${C_RESET} (optional, space-separated): "
-        read -r tags
-        tags=$(strip_tabs "$tags")
-    fi
+        if [[ -z "$tags" ]]; then
+            printf "${C_BOLD}Tags${C_RESET} (optional, space-separated): "
+            read -r tags
+            tags=$(strip_tabs "$tags")
+        fi
 
-    if [[ -z "$notes" ]]; then
-        printf "${C_BOLD}Notes${C_RESET} (optional): "
-        read -r notes
-        notes=$(strip_tabs "$notes")
+        if [[ -z "$notes" ]]; then
+            printf "${C_BOLD}Notes${C_RESET} (optional): "
+            read -r notes
+            notes=$(strip_tabs "$notes")
+        fi
     fi
 
     # Append to file
@@ -253,19 +261,19 @@ function cmd_find() {
     if [[ $# -eq 0 ]]; then
         print -u2 "wms find: at least one keyword required"
         print -u2 "Run 'wms find --help' for usage."
-        exit 1
+        return 1
     fi
 
     local result
     result=$(tail -n +2 "$WMS_FILE")
 
     for term in "$@"; do
-        result=$(printf '%s\n' "$result" | grep -i "$term")
+        result=$(printf '%s\n' "$result" | grep -iF "$term")
     done
 
     if [[ -z "$result" ]]; then
         print "${C_DIM}No items found matching: $*${C_RESET}"
-        exit 0
+        return 1
     fi
 
     printf '%s\n' "$result" | format_table
@@ -293,7 +301,7 @@ function cmd_ls() {
 
     if [[ $count -eq 0 ]]; then
         print "${C_DIM}No items yet. Use 'wms add' to add items.${C_RESET}"
-        exit 0
+        return 0
     fi
 
     print "${C_BOLD}${C_CYAN}$count item(s):${C_RESET}"
@@ -325,7 +333,7 @@ function cmd_rm() {
 
     if [[ $count -eq 0 ]]; then
         print "${C_DIM}No items to remove.${C_RESET}"
-        exit 0
+        return 0
     fi
 
     local selected
@@ -345,7 +353,7 @@ function cmd_rm() {
 
     if [[ -z "$selected" ]]; then
         print "${C_DIM}Cancelled.${C_RESET}"
-        exit 0
+        return 0
     fi
 
     local line_num="${selected%%$'\t'*}"
@@ -358,6 +366,7 @@ function cmd_rm() {
     read -r confirm
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
         local file_line=$(( line_num + 1 ))
+        backup_data
         local tmpfile
         tmpfile=$(mktemp)
         sed "${file_line}d" "$WMS_FILE" > "$tmpfile" && mv "$tmpfile" "$WMS_FILE"
@@ -394,7 +403,7 @@ function cmd_edit() {
 
     if [[ $count -eq 0 ]]; then
         print "${C_DIM}No items to edit.${C_RESET}"
-        exit 0
+        return 0
     fi
 
     local selected
@@ -414,7 +423,7 @@ function cmd_edit() {
 
     if [[ -z "$selected" ]]; then
         print "${C_DIM}Cancelled.${C_RESET}"
-        exit 0
+        return 0
     fi
 
     local line_num="${selected%%$'\t'*}"
@@ -433,7 +442,7 @@ function _do_edit() {
 
     if [[ -z "$raw_line" ]]; then
         print -u2 "wms: item not found"
-        exit 1
+        return 1
     fi
 
     local item_name item_location item_category item_tags item_notes
@@ -468,14 +477,13 @@ function _do_edit() {
     vared new_notes
     new_notes=$(strip_tabs "$new_notes")
 
-    # Build new TSV line - escape any / or & for sed replacement
-    local new_line
-    new_line=$(printf "%s\t%s\t%s\t%s\t%s" "$new_name" "$new_location" "$new_category" "$new_tags" "$new_notes")
-
-    # Use a python-free approach: write temp file and reconstruct
+    # Reconstruct file with updated line, preserving all characters literally
+    backup_data
     local tmp_file
     tmp_file=$(mktemp)
-    awk -v line="$file_line" -v new="$new_line" 'NR == line { print new; next } { print }' "$WMS_FILE" > "$tmp_file"
+    head -n $(( file_line - 1 )) "$WMS_FILE" > "$tmp_file"
+    printf "%s\t%s\t%s\t%s\t%s\n" "$new_name" "$new_location" "$new_category" "$new_tags" "$new_notes" >> "$tmp_file"
+    tail -n +$(( file_line + 1 )) "$WMS_FILE" >> "$tmp_file"
     mv "$tmp_file" "$WMS_FILE"
 
     print "${C_GREEN}Updated:${C_RESET} $new_name"
@@ -492,14 +500,14 @@ function cmd_install() {
         rm "$link"
     elif [[ -e "$link" ]]; then
         print -u2 "wms install: '$link' exists and is not a symlink. Remove it manually."
-        exit 1
+        return 1
     fi
 
     ln -s "$WMS_SCRIPT" "$link"
     print "${C_GREEN}Installed:${C_RESET} $link -> $WMS_SCRIPT"
 
     # Check if ~/.local/bin is in PATH
-    if ! print "$PATH" | grep -q "$bin_dir"; then
+    if ! print "$PATH" | grep -qF "$bin_dir"; then
         print "${C_YELLOW}Note:${C_RESET} '$bin_dir' is not in your PATH."
         print "Add this to your ~/.zshrc or ~/.zshenv:"
         print "  export PATH=\"\$HOME/.local/bin:\$PATH\""
@@ -562,13 +570,14 @@ function cmd_help() {
 # Private subcommand: output numbered+formatted item list for fzf
 # Each line: <linenum>\t<name> [│ <field>...]  (only non-empty fields included)
 function cmd__list_items() {
-    tail -n +2 "$WMS_FILE" | nl -ba -nrz -w6 | awk -F'\t' -v sep=" \033[2m│\033[0m " '{
-        display = $2
+    awk -F'\t' -v sep=" \033[2m|\033[0m " 'NR > 1 {
+        printf "%06d\t", NR - 1
+        display = $1
+        if ($2 != "") display = display sep $2
         if ($3 != "") display = display sep $3
         if ($4 != "") display = display sep $4
-        if ($5 != "") display = display sep $5
-        print $1 "\t" display
-    }'
+        print display
+    }' "$WMS_FILE"
 }
 
 # Private subcommand: called by fzf --preview
@@ -623,6 +632,7 @@ function cmd__delete_line() {
     printf "Delete '${item_name}'? [y/N] " >&2
     read -r confirm < /dev/tty
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        backup_data
         local tmpfile
         tmpfile=$(mktemp)
         sed "${file_line}d" "$WMS_FILE" > "$tmpfile" && mv "$tmpfile" "$WMS_FILE"
@@ -654,6 +664,7 @@ function main() {
         edit|e)         cmd_edit "$@" ;;
         install)        cmd_install ;;
         help|-h|--help) cmd_help ;;
+        version|-v|--version) print "wms $WMS_VERSION" ;;
         _preview)       cmd__preview "$@" ;;
         _edit_line)     cmd__edit_line "$@" ;;
         _delete_line)   cmd__delete_line "$@" ;;
