@@ -118,7 +118,7 @@ Items are stored as tab-separated values at:
 
 Each item has five fields: `name`, `location`, `category`, `tags`, `notes`. The file is human-readable and can be edited directly with any text editor or imported into a spreadsheet.
 
-Before any edit or delete, `wms` saves a backup to `items.tsv.bak` in the same directory.
+Before any edit or delete, `wms` saves a rotating backup next to the data file. The most recent pre-change copy is `items.tsv.bak.1`; older ones shift to `.bak.2` and `.bak.3`. Three destructive operations are preserved; the fourth drops the oldest.
 
 ## Command reference
 
