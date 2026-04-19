@@ -2,7 +2,7 @@
 # wms - Where's My Stuff
 # Track where physical items are stored
 
-readonly WMS_VERSION="1.1.1"
+readonly WMS_VERSION="1.1.2"
 readonly WMS_SCRIPT="${0:A}"
 readonly WMS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/wms"
 readonly WMS_FILE="$WMS_DIR/items.tsv"
@@ -19,12 +19,28 @@ readonly C_RED=$'\033[31m'
 
 function init_data() {
     mkdir -p "$WMS_DIR"
-    [[ -f "$WMS_FILE" ]] || printf "%s\n" "$TSV_HEADER" > "$WMS_FILE"
+    if [[ ! -f "$WMS_FILE" ]]; then
+        printf "%s\n" "$TSV_HEADER" > "$WMS_FILE"
+        return 0
+    fi
+    # Schema check: first line must match the expected header
+    local existing_header
+    IFS= read -r existing_header < "$WMS_FILE"
+    if [[ "$existing_header" != "$TSV_HEADER" ]]; then
+        print -u2 "${C_BOLD}${C_RED}wms: data file has unexpected header.${C_RESET}"
+        print -u2 "  file:     $WMS_FILE"
+        print -u2 "  expected: $TSV_HEADER"
+        print -u2 "  found:    $existing_header"
+        print -u2 "Fix the header manually, or move the file aside to start fresh."
+        exit 1
+    fi
 }
 
-# Create a backup of the data file before destructive operations
+# Create a rotating backup: .bak.1 (newest) -> .bak.3 (oldest, overwritten).
 function backup_data() {
-    cp "$WMS_FILE" "$WMS_FILE.bak"
+    [[ -f "$WMS_FILE.bak.2" ]] && mv "$WMS_FILE.bak.2" "$WMS_FILE.bak.3"
+    [[ -f "$WMS_FILE.bak.1" ]] && mv "$WMS_FILE.bak.1" "$WMS_FILE.bak.2"
+    cp "$WMS_FILE" "$WMS_FILE.bak.1"
 }
 
 function check_fzf() {
@@ -372,7 +388,7 @@ function cmd_rm() {
         local file_line=$(( line_num + 1 ))
         backup_data
         local tmpfile
-        tmpfile=$(mktemp)
+        tmpfile=$(mktemp "$WMS_FILE.XXXXXX")
         sed "${file_line}d" "$WMS_FILE" > "$tmpfile" && mv "$tmpfile" "$WMS_FILE"
         print -r -- "${C_RED}Deleted:${C_RESET} $item_name"
     else
@@ -484,7 +500,7 @@ function _do_edit() {
     # Reconstruct file with updated line, preserving all characters literally
     backup_data
     local tmp_file
-    tmp_file=$(mktemp)
+    tmp_file=$(mktemp "$WMS_FILE.XXXXXX")
     head -n $(( file_line - 1 )) "$WMS_FILE" > "$tmp_file"
     printf "%s\t%s\t%s\t%s\t%s\n" "$new_name" "$new_location" "$new_category" "$new_tags" "$new_notes" >> "$tmp_file"
     tail -n +$(( file_line + 1 )) "$WMS_FILE" >> "$tmp_file"
@@ -510,8 +526,8 @@ function cmd_install() {
     ln -s "$WMS_SCRIPT" "$link"
     print "${C_GREEN}Installed:${C_RESET} $link -> $WMS_SCRIPT"
 
-    # Check if ~/.local/bin is in PATH
-    if ! print "$PATH" | grep -qF "$bin_dir"; then
+    # Check if ~/.local/bin is in PATH (delimited to avoid superstring false-match)
+    if [[ ":$PATH:" != *":$bin_dir:"* ]]; then
         print "${C_YELLOW}Note:${C_RESET} '$bin_dir' is not in your PATH."
         print "Add this to your ~/.zshrc or ~/.zshenv:"
         print "  export PATH=\"\$HOME/.local/bin:\$PATH\""
@@ -639,7 +655,7 @@ function cmd__delete_line() {
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
         backup_data
         local tmpfile
-        tmpfile=$(mktemp)
+        tmpfile=$(mktemp "$WMS_FILE.XXXXXX")
         sed "${file_line}d" "$WMS_FILE" > "$tmpfile" && mv "$tmpfile" "$WMS_FILE"
         print -r -- "Deleted: $item_name" >&2
     else
